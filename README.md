@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ---
 title: Churn Escalation
 emoji: 🏃
@@ -293,6 +294,8 @@ a canary and confirm the same customer always lands on the same version; and pul
 up `feature_store.sqlite` in any SQLite browser and see real logged predictions.
 That's the operational-fluency bar the roadmap is actually asking for.
 
+=======
+>>>>>>> 964c139 (docs: remove README.md content)
 ---
 title: Churn Escalation
 emoji: 🏃
@@ -300,6 +303,7 @@ colorFrom: green
 colorTo: yellow
 sdk: static
 pinned: false
+<<<<<<< HEAD
 ---
 
 >>>>>>> b8e11e0 (initial commit)
@@ -590,3 +594,6 @@ retrain, watch the champion-challenger gate actually reject a worse model; flip 
 a canary and confirm the same customer always lands on the same version; and pull
 up `feature_store.sqlite` in any SQLite browser and see real logged predictions.
 That's the operational-fluency bar the roadmap is actually asking for.
+=======
+---
+>>>>>>> 964c139 (docs: remove README.md content)
