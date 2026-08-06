@@ -283,3 +283,14 @@ retrain, watch the champion-challenger gate actually reject a worse model; flip 
 a canary and confirm the same customer always lands on the same version; and pull
 up `feature_store.sqlite` in any SQLite browser and see real logged predictions.
 That's the operational-fluency bar the roadmap is actually asking for.
+
+---
+title: Churn Escalation
+emoji: 🏃
+colorFrom: green
+colorTo: yellow
+sdk: static
+pinned: false
+---
+
+Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
