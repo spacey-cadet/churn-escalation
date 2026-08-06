@@ -284,7 +284,10 @@ a canary and confirm the same customer always lands on the same version; and pul
 up `feature_store.sqlite` in any SQLite browser and see real logged predictions.
 That's the operational-fluency bar the roadmap is actually asking for.
 
+<<<<<<< HEAD
 
 
 Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
 
+=======
+>>>>>>> 51ce253 (feat: Implement label-delay backfill and model training pipeline)
