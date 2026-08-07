@@ -4,7 +4,7 @@ title: Churn Escalation
 emoji: 🏃
 colorFrom: green
 colorTo: yellow
-sdk: static
+sdk: docker
 pinned: false
 ---
 
