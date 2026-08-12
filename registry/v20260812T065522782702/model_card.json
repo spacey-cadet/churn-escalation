@@ -1,0 +1,27 @@
+{
+  "version": "v20260812T065522782702",
+  "created_at": "2026-08-12T06:55:22.794368+00:00",
+  "data_version": "features_clean@1786517720048827322",
+  "hyperparameters": {
+    "n_estimators": 200,
+    "max_depth": 4,
+    "learning_rate": 0.05,
+    "scale_pos_weight": 32.369928400954656,
+    "eval_metric": "logloss",
+    "random_state": 42
+  },
+  "thresholds": {
+    "t_low": 0.2322680412371134,
+    "t_high": 0.2322680412371134,
+    "cost_low": 2.0,
+    "cost_high": 12.0
+  },
+  "metrics": {
+    "pr_auc": 0.9935257284964545,
+    "roc_auc": 0.9997553797347399,
+    "n_train": 13982,
+    "n_final_test": 2997,
+    "positive_rate_train": 0.029967100557860105
+  },
+  "stage": "production"
+}
