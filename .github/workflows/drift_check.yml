@@ -1,0 +1,40 @@
+name: Drift Check
+
+# Hourly cron -- the free scheduled-Actions equivalent of an always-on
+# streaming drift job, exactly as PIPELINE_README.md describes. The only
+# change from the local version is WHERE it reads the inference log from:
+# DynamoDB now, instead of a feature_store.sqlite file that no longer exists
+# once the serving Lambda is the thing writing it.
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Run drift monitor against the live DynamoDB inference log
+        env:
+          S3_REGISTRY_BUCKET: ${{ secrets.S3_REGISTRY_BUCKET }}
+          DYNAMODB_ONLINE_TABLE: churn-online-features
+          DYNAMODB_OFFLINE_TABLE: churn-offline-features
+          DYNAMODB_LOG_TABLE: churn-inference-log
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: python3 -m src.drift_monitor
