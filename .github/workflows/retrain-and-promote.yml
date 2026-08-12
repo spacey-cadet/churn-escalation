@@ -1,22 +1,23 @@
 name: Retrain and Promote
-
 # Manual trigger only, on purpose -- PIPELINE_README.md is explicit that this
 # repo assumes retraining "periodically, by hand" on refreshed/re-curated
 # data, not continuously. This workflow is the AWS-aware equivalent of
 # running scripts/retrain.sh locally.
+
 on:
   workflow_dispatch:
 
-permissions:
-  id-token: write
-  contents: read
-
 env:
+  AWS_REGION: us-east-1
   S3_REGISTRY_BUCKET: ${{ secrets.S3_REGISTRY_BUCKET }}
   DYNAMODB_ONLINE_TABLE: churn-online-features
   DYNAMODB_OFFLINE_TABLE: churn-offline-features
   DYNAMODB_LOG_TABLE: churn-inference-log
   ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+
+permissions:
+  id-token: write # required for OIDC -- do not remove
+  contents: read
 
 jobs:
   retrain:
@@ -28,11 +29,15 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
 
+      # Reuses the SAME GitHub OIDC role as the deploy workflow
+      # (AWS_DEPLOY_ROLE_ARN secret). That role's permissions policy must
+      # allow read/write access to the S3 registry bucket and DynamoDB
+      # tables referenced above.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
       # Assumes data/features_clean.parquet / data/labels_delayed.parquet have
       # already been refreshed/re-curated on this branch before triggering --
