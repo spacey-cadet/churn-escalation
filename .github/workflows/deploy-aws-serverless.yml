@@ -36,6 +36,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Debug caller identity
+        run: aws sts get-caller-identity
+
       # --provenance=false --sbom=false is not optional: default buildx
       # behavior attaches attestations that produce a multi-manifest OCI
       # image index, and Lambda's CreateFunction/UpdateFunctionCode
