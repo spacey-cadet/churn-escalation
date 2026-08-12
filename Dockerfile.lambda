@@ -10,12 +10,13 @@
 #     -f Dockerfile.lambda -t <account-id>.dkr.ecr.<region>.amazonaws.com/churn-serving:latest \
 #     --push .
 
-FROM public.ecr.aws/lambda/python:3.11
+FROM public.ecr.aws/lambda/python:3.12
 
 # xgboost's prebuilt wheel is generally self-contained (unlike lightgbm, which
 # needed libgomp installed separately in Project 1). Installing it here anyway
 # costs nothing at build time and avoids re-diagnosing an OSError if a future
 # xgboost release changes its wheel's shared-library assumptions.
+
 RUN dnf install -y libgomp && dnf clean all
 
 COPY requirements.txt .

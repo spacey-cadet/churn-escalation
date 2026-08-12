@@ -179,7 +179,7 @@ resource "aws_lambda_function" "serving" {
   # headroom lightgbm needed in Project 1 (raised there from 512/10 after
   # cold-start timeouts). Revisit downward if cold starts prove fast in
   # practice -- memory is the dominant Lambda cost lever.
-  memory_size = 1024
+  memory_size = 1536
   timeout     = 30
 
   environment {
@@ -188,7 +188,6 @@ resource "aws_lambda_function" "serving" {
       DYNAMODB_OFFLINE_TABLE = aws_dynamodb_table.offline_features.name
       DYNAMODB_LOG_TABLE     = aws_dynamodb_table.inference_log.name
       S3_REGISTRY_BUCKET     = aws_s3_bucket.registry.bucket
-      AWS_REGION             = var.aws_region
       CANARY_PCT             = "0"
     }
   }
@@ -199,6 +198,20 @@ resource "aws_lambda_function" "serving" {
 resource "aws_lambda_function_url" "serving" {
   function_name      = aws_lambda_function.serving.function_name
   authorization_type = "NONE" # same public-Function-URL approach used for Project 1's two scoring Lambdas
+}
+
+resource "aws_lambda_permission" "function_url_public" {
+  statement_id           = "AllowPublicFunctionUrlInvoke"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.serving.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
+resource "aws_lambda_permission" "function_invoke_via_url" {
+  statement_id  = "AllowInvokeFunctionViaUrl"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.serving.function_name
+  principal     = "*"
 }
 
 output "function_url" {
