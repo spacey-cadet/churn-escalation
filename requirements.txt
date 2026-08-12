@@ -24,7 +24,7 @@ requests>=2.31
 pytest>=8.0
 moto[dynamodb,s3]>=5.0
 
-# Optional real GE/dbt CLI experience (not required -- pipeline works without them)
+# Optional real GE/dbt CLI experience (not required - pipeline works without them)
 # great_expectations>=0.18
 # dbt-core>=1.7
 # dbt-duckdb>=1.7
