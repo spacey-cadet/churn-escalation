@@ -35,6 +35,8 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
 
       - name: Debug caller identity
         run: aws sts get-caller-identity
@@ -43,6 +45,7 @@ jobs:
       # behavior attaches attestations that produce a multi-manifest OCI
       # image index, and Lambda's CreateFunction/UpdateFunctionCode
       # rejects that with "image manifest ... media type is not
+
       # supported." (hit and fixed once already, on Project 1.)
       - name: Build and push (Lambda-compatible manifest)
         env:
