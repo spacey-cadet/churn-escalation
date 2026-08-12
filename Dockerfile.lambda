@@ -1,0 +1,29 @@
+# Lambda container image for the serving API. This is a SEPARATE file from the
+# original Dockerfile (which still works as-is for HF Spaces/Fly.io/Railway/local
+# docker run -- keep it, don't delete it, this repo can serve either target).
+#
+# Build + push (must use buildx with these exact flags -- plain `docker build` +
+# `docker push` attaches provenance/SBOM attestations that Lambda's CreateFunction
+# rejects with "image manifest ... media type is not supported"):
+#
+#   docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+#     -f Dockerfile.lambda -t <account-id>.dkr.ecr.<region>.amazonaws.com/churn-serving:latest \
+#     --push .
+
+FROM public.ecr.aws/lambda/python:3.12
+
+# xgboost's prebuilt wheel is generally self-contained (unlike lightgbm, which
+# needed libgomp installed separately in Project 1). Installing it here anyway
+# costs nothing at build time and avoids re-diagnosing an OSError if a future
+# xgboost release changes its wheel's shared-library assumptions.
+
+RUN dnf install -y libgomp && dnf clean all
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Registry (S3) and feature store (DynamoDB) are both remote now -- no local
+# writable directories needed, unlike the original Dockerfile.
+CMD ["src.serving.app.handler"]

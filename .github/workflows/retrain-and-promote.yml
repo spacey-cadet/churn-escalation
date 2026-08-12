@@ -1,0 +1,53 @@
+name: Retrain and Promote
+# Manual trigger only, on purpose -- PIPELINE_README.md is explicit that this
+# repo assumes retraining "periodically, by hand" on refreshed/re-curated
+# data, not continuously. This workflow is the AWS-aware equivalent of
+# running scripts/retrain.sh locally.
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  S3_REGISTRY_BUCKET: ${{ secrets.S3_REGISTRY_BUCKET }}
+  DYNAMODB_ONLINE_TABLE: churn-online-features
+  DYNAMODB_OFFLINE_TABLE: churn-offline-features
+  DYNAMODB_LOG_TABLE: churn-inference-log
+  ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+
+permissions:
+  id-token: write # required for OIDC -- do not remove
+  contents: read
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+
+      # Reuses the SAME GitHub OIDC role as the deploy workflow
+      # (AWS_DEPLOY_ROLE_ARN secret). That role's permissions policy must
+      # allow read/write access to the S3 registry bucket and DynamoDB
+      # tables referenced above.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Assumes data/features_clean.parquet / data/labels_delayed.parquet have
+      # already been refreshed/re-curated on this branch before triggering --
+      # same precondition scripts/retrain.sh has always had.
+      - name: Train + register new candidate
+        run: python3 -m src.modeling.train
+
+      - name: Champion-challenger gate + promote if it passes
+        run: python3 scripts/evaluate_and_promote.py
+
+      - name: Tell the running Lambda to pick up the new pointer
+        if: success()
+        run: curl -sf -X POST "${{ secrets.SERVING_FUNCTION_URL }}/admin/reload"

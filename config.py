@@ -1,14 +1,25 @@
 """
-Single source of truth for paths and tunables used across the pipeline.
-Nothing here talks to a paid service. Everything is a local file, a local
-SQLite DB, or an optional webhook URL read from the environment.
+Single source of truth for paths, table/bucket names, and tunables used across
+the pipeline.
+
+Local files stay local: training data (`data/*.parquet`) and the dead-letter
+queue live in the repo checkout (your machine, or the GitHub Actions runner) --
+ingestion, training, and the quality gates run periodically on a machine that
+has this repo checked out, not inside Lambda.
+
+The feature store and model registry are AWS-backed (DynamoDB + S3) so the
+serving API can run in Lambda, where the filesystem is read-only outside
+`/tmp` and nothing written there survives between invocations or concurrent
+executions. See src/feature_store.py and src/registry.py for the
+implementations -- nothing else in the repo needed to change, because both
+kept their original function signatures.
 """
 import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
-# --- data ---
+# --- data (local -- training/gates run outside Lambda) ---
 DATA_DIR = ROOT / "data"
 RAW_LANDING = DATA_DIR / "raw_landing.parquet"
 FEATURES_CLEAN = DATA_DIR / "features_clean.parquet"
@@ -20,13 +31,20 @@ FEATURES = [
     "days_since_last_login", "tenure_days", "monthly_spend",
 ]
 
-# --- model registry (local, file-based -- see src/registry.py) ---
-REGISTRY_DIR = ROOT / "registry"
-PRODUCTION_POINTER = REGISTRY_DIR / "production.json"   # which version is "champion"
-STAGING_POINTER = REGISTRY_DIR / "staging.json"          # which version is "challenger"
+# --- model registry (S3-backed -- see src/registry.py) ---
+# These are now POINTER NAMES, not local file paths -- registry.py maps them to
+# S3 keys under pointers/<name>.json. Kept as plain strings (rather than, say,
+# an enum) so this file stays a drop-in-compatible source of truth for anything
+# that used to do `config.PRODUCTION_POINTER`.
+PRODUCTION_POINTER = "production"
+STAGING_POINTER = "staging"
+S3_REGISTRY_BUCKET = os.environ.get("S3_REGISTRY_BUCKET", "churn-registry")
 
-# --- feature store (SQLite standing in for Redis + partitioned Parquet-on-S3) ---
-FEATURE_STORE_DB = ROOT / "feature_store_db" / "feature_store.sqlite"
+# --- feature store (DynamoDB-backed -- see src/feature_store.py) ---
+DYNAMODB_ONLINE_TABLE = os.environ.get("DYNAMODB_ONLINE_TABLE", "churn-online-features")
+DYNAMODB_OFFLINE_TABLE = os.environ.get("DYNAMODB_OFFLINE_TABLE", "churn-offline-features")
+DYNAMODB_LOG_TABLE = os.environ.get("DYNAMODB_LOG_TABLE", "churn-inference-log")
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 # --- ingestion gate thresholds (Great Expectations equivalent) ---
 ROLLING_AVG_ROW_COUNT = 20_000

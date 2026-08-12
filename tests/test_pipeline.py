@@ -3,12 +3,19 @@ Sanity tests run in CI on every push (see .github/workflows/ci.yml). These aren'
 exhaustive model-quality tests -- they check that the pipeline's mechanics (gates,
 registry, feature store, cascade ordering) behave correctly, since that's what
 silently breaking would be most dangerous.
-"""
-import sys
-import shutil
-from pathlib import Path
-from datetime import datetime, timedelta
 
+Now that the feature store and registry are AWS-backed (DynamoDB + S3), the
+isolation fixture below uses moto's `mock_aws()` to stand up throwaway tables and
+a throwaway bucket per test -- no real AWS calls, no shared state between tests,
+no local SQLite/disk dependency, and no AWS bill from running the suite.
+"""
+import json
+import sys
+from pathlib import Path
+from datetime import datetime
+
+import boto3
+import moto
 import numpy as np
 import pandas as pd
 import pytest
@@ -19,17 +26,67 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import config
 
+AWS_REGION = "us-east-1"
+
 
 @pytest.fixture(autouse=True)
-def isolated_state(tmp_path, monkeypatch):
-    """Every test gets its own registry dir and SQLite file so tests never
-    interfere with each other or with a real local run of the pipeline."""
-    monkeypatch.setattr(config, "REGISTRY_DIR", tmp_path / "registry")
-    monkeypatch.setattr(config, "PRODUCTION_POINTER", tmp_path / "registry" / "production.json")
-    monkeypatch.setattr(config, "STAGING_POINTER", tmp_path / "registry" / "staging.json")
-    monkeypatch.setattr(config, "FEATURE_STORE_DB", tmp_path / "feature_store.sqlite")
-    config.REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-    yield
+def isolated_state(monkeypatch):
+    """Every test gets its own mocked DynamoDB tables and S3 bucket. moto
+    intercepts the botocore HTTP layer, so it doesn't matter that
+    feature_store.py / registry.py created their boto3 client/resource objects
+    at import time -- as long as mock_aws() is active when a call is actually
+    made, it's routed to moto's virtual AWS instead of a real account."""
+    # moto still requires botocore to find *some* credentials to sign requests
+    # with, even though mock_aws() intercepts them before anything real
+    # happens -- dummy values are the documented moto pattern, safe in CI.
+    monkeypatch.setenv("AWS_DEFAULT_REGION", AWS_REGION)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("AWS_SECURITY_TOKEN", "testing")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "testing")
+    monkeypatch.setattr(config, "PRODUCTION_POINTER", "production")
+    monkeypatch.setattr(config, "STAGING_POINTER", "staging")
+
+    import feature_store
+    import registry
+
+    with moto.mock_aws():
+        dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
+        dynamodb.create_table(
+            TableName=feature_store.ONLINE_TABLE,
+            KeySchema=[{"AttributeName": "entity_id", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "entity_id", "AttributeType": "S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        dynamodb.create_table(
+            TableName=feature_store.OFFLINE_TABLE,
+            KeySchema=[
+                {"AttributeName": "entity_id", "KeyType": "HASH"},
+                {"AttributeName": "ts", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "entity_id", "AttributeType": "S"},
+                {"AttributeName": "ts", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        dynamodb.create_table(
+            TableName=feature_store.LOG_TABLE,
+            KeySchema=[
+                {"AttributeName": "log_shard", "KeyType": "HASH"},
+                {"AttributeName": "sk", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "log_shard", "AttributeType": "S"},
+                {"AttributeName": "sk", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+
+        s3 = boto3.client("s3", region_name=AWS_REGION)
+        s3.create_bucket(Bucket=registry.BUCKET)
+
+        yield
 
 
 def test_ingestion_gate_quarantines_within_tolerance_and_proceeds():
@@ -112,13 +169,17 @@ def test_reconciliation_catches_injected_sync_bug():
     import feature_store
     ts = datetime(2026, 1, 1)
     feature_store.write_features("cust_3", {"support_tickets_30d": 1.0}, ts=ts)
+
     # Simulate a sync bug: online store silently has a stale/wrong value.
-    import sqlite3, json
-    with sqlite3.connect(str(config.FEATURE_STORE_DB)) as conn:
-        conn.execute(
-            "UPDATE online_features SET features_json = ? WHERE entity_id = ?",
-            (json.dumps({"support_tickets_30d": 999.0}), "cust_3"),
-        )
+    # (Was a raw sqlite3 UPDATE against the local file; now an UpdateItem
+    # against the mocked online table -- same intent, new backend.)
+    table = boto3.resource("dynamodb", region_name=AWS_REGION).Table(feature_store.ONLINE_TABLE)
+    table.update_item(
+        Key={"entity_id": "cust_3"},
+        UpdateExpression="SET features_json = :v",
+        ExpressionAttributeValues={":v": json.dumps({"support_tickets_30d": 999.0})},
+    )
+
     mismatches = feature_store.reconcile(["cust_3"])
     assert len(mismatches) == 1
     assert mismatches[0]["entity_id"] == "cust_3"
@@ -159,7 +220,6 @@ def test_registry_first_model_always_passes_gate():
 
 def test_cascade_threshold_ordering_is_enforced():
     from src.modeling.train import derive_cascade_thresholds
-    import numpy as np
     y = np.array([0] * 90 + [1] * 10)
     scores = np.concatenate([np.random.uniform(0, 0.4, 90), np.random.uniform(0.6, 1.0, 10)])
     thresholds = derive_cascade_thresholds(y, scores)

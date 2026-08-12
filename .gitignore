@@ -1,3 +1,12 @@
-.venv
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+# Python
+.venv/
+venv/
 __pycache__/
-*.pyc
+*.pycinfra/aws-serveless/terraform/.terraform/

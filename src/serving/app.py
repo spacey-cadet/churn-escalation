@@ -175,3 +175,10 @@ def reload_models():
     production/staging pointers without a full restart."""
     _MODELS.update(_load_models())
     return health()
+
+
+# --- Lambda entrypoint -----------------------------------------------------
+# Inert for local `uvicorn`/Docker use; only exercised when this app runs
+# behind API Gateway/Lambda Function URLs via the Dockerfile.lambda image.
+from mangum import Mangum  # noqa: E402
+handler = Mangum(app)

@@ -1,10 +1,10 @@
 # Core
 pandas>=2.0
-numpy>=1.24
+numpy==1.26.4
 pyarrow>=14.0
 scikit-learn>=1.3
 xgboost>=2.0
-scipy>=1.11
+scipy==1.11.4
 joblib>=1.3
 
 # Serving
@@ -12,11 +12,17 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 pydantic>=2.5
 
+# AWS serving (feature store + registry now DynamoDB/S3-backed; Mangum adapts
+# the FastAPI app to run behind Lambda Function URLs -- see Dockerfile.lambda)
+boto3>=1.34
+mangum>=0.17
+
 # Alerting (optional, plain HTTP webhook -- works with free Slack/Discord webhooks)
 requests>=2.31
 
 # Testing
 pytest>=8.0
+moto[dynamodb,s3]>=5.0
 
 # Optional real GE/dbt CLI experience (not required -- pipeline works without them)
 # great_expectations>=0.18

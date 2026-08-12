@@ -1,44 +1,84 @@
 """
-Free-tier model registry: no MLflow server required (though a local MLflow with a
-SQLite backend is a drop-in upgrade if you want the extra UI -- see README).
+AWS-backed model registry: S3 standing in for the local `registry/` directory.
+Same function signatures as the original, so nothing outside this file needs to
+change (scripts/evaluate_and_promote.py, src/modeling/train.py, src/serving/app.py,
+src/drift_monitor.py all call these functions exactly as before).
 
-Every trained artifact gets its own immutable, timestamped version directory under
-registry/, containing:
-    model.joblib        -- the XGBoost model
-    calibrator.joblib    -- the Platt-scaling LogisticRegression
-    model_card.json      -- data version, hyperparameters, eval metrics, thresholds
+Every trained artifact gets its own immutable key prefix under `versions/<version>/`
+in the registry bucket:
+    model.joblib
+    calibrator.joblib
+    model_card.json
 
-`production.json` and `staging.json` are pointer files -- re-pointing them is the
-entire "promotion" or "rollback" action, and it's atomic (a single file write).
-This gives you the three properties the roadmap asks for: immutable versioned
-artifacts, explicit lifecycle stages, and auditable promotion/rollback.
+`pointers/production.json` and `pointers/staging.json` are the promotion/rollback
+pointers, same idea as before -- re-pointing them (a single put_object call) is the
+entire "deploy" or "rollback" action.
+
+NOTE: config.PRODUCTION_POINTER / config.STAGING_POINTER now hold POINTER NAMES
+("production" / "staging"), not local file Paths -- see the updated config.py.
 """
+import io
 import json
+import os
 import sys
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+import boto3
 import joblib
+from botocore.exceptions import ClientError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
+
+BUCKET = os.environ.get("S3_REGISTRY_BUCKET", "churn-registry")
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+
+_s3 = boto3.client("s3", region_name=AWS_REGION)
 
 
 def _new_version_id() -> str:
     return datetime.now(timezone.utc).strftime("v%Y%m%dT%H%M%S%f")
 
 
+def _version_prefix(version: str) -> str:
+    return f"versions/{version}/"
+
+
+def _pointer_key(name: str) -> str:
+    return f"pointers/{name}.json"
+
+
+def _put_joblib(key: str, obj) -> None:
+    buf = io.BytesIO()
+    joblib.dump(obj, buf)
+    buf.seek(0)
+    _s3.put_object(Bucket=BUCKET, Key=key, Body=buf.getvalue())
+
+
+def _get_joblib(key: str):
+    resp = _s3.get_object(Bucket=BUCKET, Key=key)
+    return joblib.load(io.BytesIO(resp["Body"].read()))
+
+
+def _put_json(key: str, data: dict) -> None:
+    _s3.put_object(Bucket=BUCKET, Key=key, Body=json.dumps(data, indent=2).encode())
+
+
+def _get_json(key: str) -> dict:
+    resp = _s3.get_object(Bucket=BUCKET, Key=key)
+    return json.loads(resp["Body"].read())
+
+
 def register(model, calibrator, thresholds: dict, metrics: dict, data_version: str,
              hyperparameters: dict) -> str:
     """Saves a new immutable version. Returns the version id. Does NOT promote it --
-    promotion is a separate, explicit step (see promote())."""
+    promotion is a separate, explicit step (see promote_to_production())."""
     version = _new_version_id()
-    version_dir = config.REGISTRY_DIR / version
-    version_dir.mkdir(parents=True, exist_ok=False)
+    prefix = _version_prefix(version)
 
-    joblib.dump(model, version_dir / "model.joblib")
-    joblib.dump(calibrator, version_dir / "calibrator.joblib")
+    _put_joblib(prefix + "model.joblib", model)
+    _put_joblib(prefix + "calibrator.joblib", calibrator)
 
     model_card = {
         "version": version,
@@ -49,31 +89,31 @@ def register(model, calibrator, thresholds: dict, metrics: dict, data_version: s
         "metrics": metrics,
         "stage": "none",
     }
-    with open(version_dir / "model_card.json", "w") as f:
-        json.dump(model_card, f, indent=2)
-
+    _put_json(prefix + "model_card.json", model_card)
     return version
 
 
 def load(version: str) -> dict:
-    version_dir = config.REGISTRY_DIR / version
-    model = joblib.load(version_dir / "model.joblib")
-    calibrator = joblib.load(version_dir / "calibrator.joblib")
-    with open(version_dir / "model_card.json") as f:
-        model_card = json.load(f)
+    prefix = _version_prefix(version)
+    model = _get_joblib(prefix + "model.joblib")
+    calibrator = _get_joblib(prefix + "calibrator.joblib")
+    model_card = _get_json(prefix + "model_card.json")
     return {"model": model, "calibrator": calibrator, "model_card": model_card}
 
 
-def _write_pointer(pointer_path: Path, version: str) -> None:
-    with open(pointer_path, "w") as f:
-        json.dump({"version": version, "pointed_at": datetime.now(timezone.utc).isoformat()}, f, indent=2)
+def _write_pointer(pointer_name: str, version: str) -> None:
+    _put_json(_pointer_key(pointer_name), {
+        "version": version, "pointed_at": datetime.now(timezone.utc).isoformat(),
+    })
 
 
-def get_pointer(pointer_path: Path) -> str | None:
-    if not pointer_path.exists():
-        return None
-    with open(pointer_path) as f:
-        return json.load(f)["version"]
+def get_pointer(pointer_name: str) -> str | None:
+    try:
+        return _get_json(_pointer_key(pointer_name))["version"]
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            return None
+        raise
 
 
 def promote_to_staging(version: str) -> None:
@@ -83,37 +123,42 @@ def promote_to_staging(version: str) -> None:
 
 def promote_to_production(version: str) -> None:
     """The auditable promotion action. Whatever was production before this call
-    becomes the previous version -- rollback is just calling this again with that
-    version id."""
+    becomes the previous version -- rollback is just calling this again with
+    that version id."""
     _write_pointer(config.PRODUCTION_POINTER, version)
     _set_stage(version, "production")
 
 
 def _set_stage(version: str, stage: str) -> None:
-    card_path = config.REGISTRY_DIR / version / "model_card.json"
-    with open(card_path) as f:
-        card = json.load(f)
+    key = _version_prefix(version) + "model_card.json"
+    card = _get_json(key)
     card["stage"] = stage
-    with open(card_path, "w") as f:
-        json.dump(card, f, indent=2)
+    _put_json(key, card)
 
 
 def list_versions() -> list[dict]:
-    if not config.REGISTRY_DIR.exists():
-        return []
+    """Lists all registered versions, oldest first. Version ids are
+    lexicographically sortable timestamps (vYYYYMMDDTHHMMSSffffff), so an
+    explicit sort on the prefix preserves chronological order without
+    depending on S3 ListObjectsV2's ordering behavior (which happens to be
+    lexicographic too, but relying on that implicitly is fragile)."""
+    paginator = _s3.get_paginator("list_objects_v2")
+    prefixes = set()
+    for page in paginator.paginate(Bucket=BUCKET, Prefix="versions/", Delimiter="/"):
+        for cp in page.get("CommonPrefixes", []):
+            prefixes.add(cp["Prefix"])
+
     out = []
-    for d in sorted(config.REGISTRY_DIR.iterdir()):
-        card_path = d / "model_card.json"
-        if card_path.exists():
-            with open(card_path) as f:
-                out.append(json.load(f))
+    for prefix in sorted(prefixes):
+        try:
+            out.append(_get_json(prefix + "model_card.json"))
+        except ClientError:
+            continue  # partially-written version, e.g. an interrupted register() call
     return out
 
 
 def evaluate_on(version: str, X, y) -> dict:
-    """Runs a registered version's full inference path (raw score -> Platt
-    calibration) over a fixed eval set and returns PR-AUC / ROC-AUC. Used by the
-    champion-challenger gate below."""
+    """Unchanged from the local version -- pure logic over load()'s output."""
     from sklearn.metrics import average_precision_score, roc_auc_score
     bundle = load(version)
     raw = bundle["model"].predict_proba(X)[:, 1]
@@ -125,14 +170,7 @@ def evaluate_on(version: str, X, y) -> dict:
 
 
 def champion_challenger_gate(challenger_version: str, eval_sets: dict) -> dict:
-    """The real (not simulated) gate: run BOTH the current production champion and
-    the challenger over every eval set provided (e.g. held-out fold, and any
-    cross-segment slice you care about), and only allow promotion if the challenger
-    doesn't regress PR-AUC by more than config.MAX_ALLOWED_PR_AUC_REGRESSION on ANY
-    of them.
-
-    eval_sets: {"held_out": (X, y), "stress_slice": (X, y), ...}
-    """
+    """Unchanged from the local version -- pure logic over get_pointer()/evaluate_on()."""
     champion_version = get_pointer(config.PRODUCTION_POINTER)
     per_set_results = {}
     passed = True
@@ -140,7 +178,6 @@ def champion_challenger_gate(challenger_version: str, eval_sets: dict) -> dict:
     for set_name, (X, y) in eval_sets.items():
         challenger_metrics = evaluate_on(challenger_version, X, y)
         if champion_version is None:
-            # No champion yet -- first-ever model always "passes" (nothing to regress against).
             per_set_results[set_name] = {
                 "champion": None, "challenger": challenger_metrics,
                 "regression": 0.0, "passed": True,
