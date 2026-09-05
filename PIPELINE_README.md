@@ -1,11 +1,5 @@
 # Churn Escalation Detector -- Free-Tier Production Pipeline
 
-A real, running version of the roadmap in `reference_rehearsal_scripts/` -- not a
-simulation of it. Every gate, the registry, the feature store, the canary split,
-and the drift monitor are wired together into one pipeline you can actually run,
-retrain, and serve from, using nothing but local files, SQLite, and free hosted
-tiers (GitHub Actions, Hugging Face Spaces, Slack/Discord webhooks).
-
 Two things shape this build, on purpose:
 - **You retrain periodically, by hand**, on refreshed/re-curated data -- not
   continuously. So every retrain goes through a real champion-challenger gate
