@@ -1,6 +1,6 @@
 # Churn Escalation Detector — Local Pipeline + AWS Serverless Production
 
-A real, running churn-escalation pipeline — not a simulation of one. Every gate, the
+A real, running churn-escalation pipeline. Every gate, the
 registry, the feature store, the canary split, and the drift monitor are wired
 together end to end. It runs two ways from the **same codebase**:
 
